@@ -1,0 +1,11 @@
+jobs: 100
+cluster: "sbatch \
+-J {config['dir']}-SNAKEMAKE \
+-A SAWARKAR-SL3-CPU \
+-p skylake \
+-t {resources.time_min} \
+--nodes={resources.nodes} \
+--ntasks={resources.tasks} \
+--cpus-per-task={resources.cpus} \
+--mail-type=BEGIN,END,FAIL"
+use-conda: true

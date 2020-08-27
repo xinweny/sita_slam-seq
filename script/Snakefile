@@ -1,0 +1,78 @@
+#### Packages ####
+import glob
+import pandas as pd
+
+#### Functions ####
+def get_organism(gse):
+    metadata_df = pd.read_csv(f"SraRunTable_{gse}.txt", header=0, sep=',')
+
+    return metadata_df['Organism'][0]
+
+#### Config ####
+workdir: "/rds/project/rs2099/rds-rs2099-toxgenomics/sita/slam-seq/" + config['GSE']
+localrules: all, alleyoop_collapse
+
+SAMPLES = [sample.split("/")[1].split(".")[0] for sample in glob.glob("fastq/*.fastq.gz")]
+ORGANISM = get_organism(config['GSE'])
+
+#### Workflow ####
+rule all:
+    input:
+        expand("out/count/{sample}_trimmed.fq_slamdunk_mapped_filtered_tcount_collapsed.tsv", sample=SAMPLES)
+
+rule trim_galore:
+    input:
+        expand("fastq/{sample}.fastq.gz", sample=SAMPLES)
+    output:
+        expand("fastq/{sample}_trimmed.fq.gz", sample=SAMPLES)
+    resources:
+        time_min = 120,
+        nodes = 1,
+        tasks = 1,
+        cpus = len(SAMPLES)
+    shell:
+        "trim_galore -j {resources.cpus} -o fastq --stringency 3 {input}"
+
+rule slam_dunk:
+    input:
+        expand("fastq/{sample}_trimmed.fq.gz", sample=SAMPLES)
+    output:
+        expand("out/map/{sample}_trimmed.fq_slamdunk_mapped.bam", sample=SAMPLES),
+        expand("out/filter/{sample}_trimmed.fq_slamdunk_mapped_filtered.bam", sample=SAMPLES),
+        expand("out/snp/{sample}_trimmed.fq_slamdunk_mapped_filtered_snp.vcf", sample=SAMPLES),
+        expand("out/count/{sample}_trimmed.fq_slamdunk_mapped_filtered_tcount.tsv", sample=SAMPLES)
+    resources:
+        time_min = 360,
+        nodes = 1,
+        tasks = 1,
+        cpus = len(SAMPLES)
+    params:
+        organism = ORGANISM
+    run:
+        if params.organism == "Homo sapiens":
+            fasta = "/rds/project/rs2099/rds-rs2099-toxgenomics/shared/human/GRCh38.primary_assembly.genome.fa"
+            bed_utr = "/rds/project/rs2099/rds-rs2099-toxgenomics/shared/human/GRCh38_gencode.v34_3UTR.bed"
+        elif params.organism == "Mus musculus":
+            fasta = "/rds/project/rs2099/rds-rs2099-toxgenomics/shared/mouse/GRCm38.primary_assembly.genome.fa"
+            bed_utr = "/rds/project/rs2099/rds-rs2099-toxgenomics/shared/mouse/GRCm38_gencode.vM25_3UTR.bed"
+
+        shell("""slamdunk all \
+        -r {fasta} \
+        -b {bed_utr} \
+        -m \
+        -t {resources.cpus} \
+        -5 12 \
+        -n 100 \
+        -mts 2 \
+        -mv 0.2 \
+        -mbq 27 \
+        -o out \
+        {input}""")
+
+rule alleyoop_collapse:
+    input:
+        "out/count/{sample}.fastq_slamdunk_mapped_filtered_tcount.tsv"
+    output:
+        "out/count/{sample}.fastq_slamdunk_mapped_filtered_tcount_collapsed.tsv"
+    run:
+        "alleyoop collapse -o out/count {wildcards.sample}"
