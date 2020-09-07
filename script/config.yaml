@@ -1,11 +1,11 @@
 jobs: 100
-cluster: "sbatch \
--J {config['dir']}-SNAKEMAKE \
--A SAWARKAR-SL3-CPU \
--p skylake \
--t {resources.time_min} \
+cluster: "sbatch $(/home/xwy21/project/shared/script/parseJobID.sh {dependencies}) \
+--job-name={params.job_name} \
+--account=SAWARKAR-SL3-CPU \
+--partition=skylake \
+--time={resources.time_min} \
 --nodes={resources.nodes} \
 --ntasks={resources.tasks} \
 --cpus-per-task={resources.cpus} \
---mail-type=BEGIN,END,FAIL"
-use-conda: true
+--mail-type=END,FAIL \
+--output=\"{params.job_name}.out\""

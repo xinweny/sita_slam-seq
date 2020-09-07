@@ -1,5 +1,5 @@
 #### Packages ####
-import glob
+import glob, os
 import pandas as pd
 
 #### Functions ####
@@ -9,27 +9,30 @@ def get_organism(gse):
     return metadata_df['Organism'][0]
 
 #### Config ####
-workdir: "/rds/project/rs2099/rds-rs2099-toxgenomics/sita/slam-seq/" + config['GSE']
+workdir: "/rds/project/rs2099/rds-rs2099-toxgenomics/sita_slam-seq/" + config['GSE']
 localrules: all, alleyoop_collapse
 
-SAMPLES = [sample.split("/")[1].split(".")[0] for sample in glob.glob("fastq/*.fastq.gz")]
+SAMPLES = [os.path.basename(sample).replace('.fq.gz', '') for sample in glob.glob("fastq/*.fq.gz")
+           if not "trimmed" in os.path.basename(sample)]
 ORGANISM = get_organism(config['GSE'])
 
 #### Workflow ####
 rule all:
     input:
-        expand("out/count/{sample}_trimmed.fq_slamdunk_mapped_filtered_tcount_collapsed.tsv", sample=SAMPLES)
+        expand("out/count/{sample}_trimmed.fq_slamdunk_mapped_filtered_tcount_collapsed.csv", sample=SAMPLES)
 
 rule trim_galore:
     input:
-        expand("fastq/{sample}.fastq.gz", sample=SAMPLES)
+        expand("fastq/{sample}.fq.gz", sample=SAMPLES)
     output:
         expand("fastq/{sample}_trimmed.fq.gz", sample=SAMPLES)
+    params:
+        job_name = f"{config['GSE']}_TRIM"
     resources:
         time_min = 120,
         nodes = 1,
         tasks = 1,
-        cpus = len(SAMPLES)
+        cpus = len(SAMPLES) if len(SAMPLES) <= 32 else 32
     shell:
         "trim_galore -j {resources.cpus} -o fastq --stringency 3 {input}"
 
@@ -40,13 +43,14 @@ rule slam_dunk:
         expand("out/map/{sample}_trimmed.fq_slamdunk_mapped.bam", sample=SAMPLES),
         expand("out/filter/{sample}_trimmed.fq_slamdunk_mapped_filtered.bam", sample=SAMPLES),
         expand("out/snp/{sample}_trimmed.fq_slamdunk_mapped_filtered_snp.vcf", sample=SAMPLES),
-        expand("out/count/{sample}_trimmed.fq_slamdunk_mapped_filtered_tcount.tsv", sample=SAMPLES)
+        expand("out/count/{sample}_trimmed.fq_slamdunk_mapped_filtered_tcount.csv", sample=SAMPLES)
     resources:
         time_min = 360,
         nodes = 1,
         tasks = 1,
-        cpus = len(SAMPLES)
+        cpus = len(SAMPLES) if len(SAMPLES) <= 32 else 32
     params:
+        job_name = f"{config['GSE']}_SLAMDUNK",
         organism = ORGANISM
     run:
         if params.organism == "Homo sapiens":
@@ -71,8 +75,8 @@ rule slam_dunk:
 
 rule alleyoop_collapse:
     input:
-        "out/count/{sample}.fastq_slamdunk_mapped_filtered_tcount.tsv"
+        "out/count/{sample}_trimmed.fq_slamdunk_mapped_filtered_tcount.csv"
     output:
-        "out/count/{sample}.fastq_slamdunk_mapped_filtered_tcount_collapsed.tsv"
-    run:
-        "alleyoop collapse -o out/count {wildcards.sample}"
+        "out/count/{sample}_trimmed.fq_slamdunk_mapped_filtered_tcount_collapsed.csv"
+    shell:
+        "alleyoop collapse -o out/count {input}"
