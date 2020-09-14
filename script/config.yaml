@@ -8,4 +8,4 @@ cluster: "sbatch $(/home/xwy21/project/shared/script/parseJobID.sh {dependencies
 --ntasks={resources.tasks} \
 --cpus-per-task={resources.cpus} \
 --mail-type=END,FAIL \
---output=\"{params.job_name}.out\""
+--output=\"{params.job_name}-%j.out\""

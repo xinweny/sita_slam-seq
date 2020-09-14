@@ -9,17 +9,24 @@ def get_organism(gse):
     return metadata_df['Organism'][0]
 
 #### Config ####
-workdir: "/rds/project/rs2099/rds-rs2099-toxgenomics/sita_slam-seq/" + config['GSE']
-localrules: all, alleyoop_collapse
+workdir: "/rds/project/rs2099/rds-rs2099-toxgenomics/sita_slam-seq/data/" + config['GSE']
+localrules: all
 
 SAMPLES = [os.path.basename(sample).replace('.fq.gz', '') for sample in glob.glob("fastq/*.fq.gz")
            if not "trimmed" in os.path.basename(sample)]
 ORGANISM = get_organism(config['GSE'])
 
+if ORGANISM == "Homo sapiens":
+    FASTA = "/rds/project/rs2099/rds-rs2099-toxgenomics/shared/human/GRCh38.primary_assembly.genome.fa"
+    BED_UTR = "/rds/project/rs2099/rds-rs2099-toxgenomics/shared/human/GRCh38_gencode.v34_3UTR.bed"
+elif ORGANISM == "Mus musculus":
+    FASTA = "/rds/project/rs2099/rds-rs2099-toxgenomics/shared/mouse/GRCm38.primary_assembly.genome.fa"
+    BED_UTR = "/rds/project/rs2099/rds-rs2099-toxgenomics/shared/mouse/GRCm38_gencode.vM25_3UTR.bed"
+
 #### Workflow ####
 rule all:
     input:
-        expand("out/count/{sample}_trimmed.fq_slamdunk_mapped_filtered_tcount_collapsed.csv", sample=SAMPLES)
+        expand("out/count/{sample}_trimmed.fq_slamdunk_mapped_filtered_tcount.csv", sample=SAMPLES)
 
 rule trim_galore:
     input:
@@ -32,7 +39,7 @@ rule trim_galore:
         time_min = 120,
         nodes = 1,
         tasks = 1,
-        cpus = len(SAMPLES) if len(SAMPLES) <= 32 else 32
+        cpus = len(SAMPLES) if len(SAMPLES) < 32 else 32
     shell:
         "trim_galore -j {resources.cpus} -o fastq --stringency 3 {input}"
 
@@ -48,35 +55,30 @@ rule slam_dunk:
         time_min = 360,
         nodes = 1,
         tasks = 1,
-        cpus = len(SAMPLES) if len(SAMPLES) <= 32 else 32
+        cpus = len(SAMPLES) if len(SAMPLES) < 32 else 32
     params:
         job_name = f"{config['GSE']}_SLAMDUNK",
-        organism = ORGANISM
-    run:
-        if params.organism == "Homo sapiens":
-            fasta = "/rds/project/rs2099/rds-rs2099-toxgenomics/shared/human/GRCh38.primary_assembly.genome.fa"
-            bed_utr = "/rds/project/rs2099/rds-rs2099-toxgenomics/shared/human/GRCh38_gencode.v34_3UTR.bed"
-        elif params.organism == "Mus musculus":
-            fasta = "/rds/project/rs2099/rds-rs2099-toxgenomics/shared/mouse/GRCm38.primary_assembly.genome.fa"
-            bed_utr = "/rds/project/rs2099/rds-rs2099-toxgenomics/shared/mouse/GRCm38_gencode.vM25_3UTR.bed"
-
-        shell("""slamdunk all \
-        -r {fasta} \
-        -b {bed_utr} \
-        -m \
-        -t {resources.cpus} \
+        fasta = FASTA,
+        bed_utr = BED_UTR
+    conda:
+        "envs/slam-seq.yml"
+    shell:
+        """slamdunk all \
+        -r {params.fasta} \
+        -b {params.bed_utr} \
+        -n 100 -m \
         -5 12 \
-        -n 100 \
-        -mts 2 \
+        -c 2 \
         -mv 0.2 \
         -mbq 27 \
         -o out \
-        {input}""")
+        -t {resources.cpus} \
+        {input}"""
 
-rule alleyoop_collapse:
-    input:
-        "out/count/{sample}_trimmed.fq_slamdunk_mapped_filtered_tcount.csv"
-    output:
-        "out/count/{sample}_trimmed.fq_slamdunk_mapped_filtered_tcount_collapsed.csv"
-    shell:
-        "alleyoop collapse -o out/count {input}"
+# rule alleyoop_collapse:
+#     input:
+#         "out/count/{sample}_trimmed.fq_slamdunk_mapped_filtered_tcount.csv"
+#     output:
+#         "out/count/{sample}_trimmed.fq_slamdunk_mapped_filtered_tcount_collapsed.csv"
+#     shell:
+#         "singularity exec ../slamdunk.simg alleyoop collapse -o out/count {input}"
