@@ -4,15 +4,17 @@ import pandas as pd
 
 #### Functions ####
 def get_organism(gse):
-    metadata_df = pd.read_csv(f"SraRunTable_{gse}.txt", header=0, sep=',')
+    metadata_df = pd.read_csv(f"{PREFIX}/SraRunTable_{gse}.txt", header=0, sep=',')
 
     return metadata_df['Organism'][0]
 
 #### Config ####
-workdir: "/rds/project/rs2099/rds-rs2099-toxgenomics/sita_slam-seq/data/" + config['GSE']
+workdir: "/rds/project/rs2099/rds-rs2099-toxgenomics/sita_slam-seq/"
 localrules: all
 
-SAMPLES = [os.path.basename(sample).replace('.fq.gz', '') for sample in glob.glob("fastq/*.fq.gz")
+PREFIX = f"data/{config['GSE']}"
+
+SAMPLES = [os.path.basename(sample).replace('.fq.gz', '') for sample in glob.glob(f"{PREFIX}/fastq/*.fq.gz")
            if not "trimmed" in os.path.basename(sample)]
 ORGANISM = get_organism(config['GSE'])
 
@@ -26,13 +28,13 @@ elif ORGANISM == "Mus musculus":
 #### Workflow ####
 rule all:
     input:
-        expand("out/count/{sample}_trimmed.fq_slamdunk_mapped_filtered_tcount.csv", sample=SAMPLES)
+        expand(f"{PREFIX}/out/count/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_tcount.csv", sample=SAMPLES)
 
 rule trim_galore:
     input:
-        expand("fastq/{sample}.fq.gz", sample=SAMPLES)
+        expand(f"{PREFIX}/fastq/{{sample}}.fq.gz", sample=SAMPLES)
     output:
-        expand("fastq/{sample}_trimmed.fq.gz", sample=SAMPLES)
+        expand(f"{PREFIX}/fastq/{{sample}}_trimmed.fq.gz", sample=SAMPLES)
     params:
         job_name = f"{config['GSE']}_TRIM"
     resources:
@@ -45,12 +47,12 @@ rule trim_galore:
 
 rule slam_dunk:
     input:
-        expand("fastq/{sample}_trimmed.fq.gz", sample=SAMPLES)
+        expand(f"{PREFIX}/fastq/{{sample}}_trimmed.fq.gz", sample=SAMPLES)
     output:
-        expand("out/map/{sample}_trimmed.fq_slamdunk_mapped.bam", sample=SAMPLES),
-        expand("out/filter/{sample}_trimmed.fq_slamdunk_mapped_filtered.bam", sample=SAMPLES),
-        expand("out/snp/{sample}_trimmed.fq_slamdunk_mapped_filtered_snp.vcf", sample=SAMPLES),
-        expand("out/count/{sample}_trimmed.fq_slamdunk_mapped_filtered_tcount.csv", sample=SAMPLES)
+        expand(f"{PREFIX}/out/map/{{sample}}_trimmed.fq_slamdunk_mapped.bam", sample=SAMPLES),
+        expand(f"{PREFIX}/out/filter/{{sample}}_trimmed.fq_slamdunk_mapped_filtered.bam", sample=SAMPLES),
+        expand(f"{PREFIX}/out/snp/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_snp.vcf", sample=SAMPLES),
+        expand(f"{PREFIX}/out/count/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_tcount.csv", sample=SAMPLES)
     resources:
         time_min = 360,
         nodes = 1,
@@ -63,17 +65,17 @@ rule slam_dunk:
     conda:
         "envs/slam-seq.yml"
     shell:
-        """slamdunk all \
-        -r {params.fasta} \
-        -b {params.bed_utr} \
+        f"""slamdunk all \
+        -r {{params.fasta}} \
+        -b {{params.bed_utr}} \
         -n 100 -m \
         -5 12 \
         -c 2 \
         -mv 0.2 \
         -mbq 27 \
-        -o out \
-        -t {resources.cpus} \
-        {input}"""
+        -o {PREFIX}/out \
+        -t {{resources.cpus}} \
+        {{input}}"""
 
 # rule alleyoop_collapse:
 #     input:
