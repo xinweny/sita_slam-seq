@@ -10,7 +10,7 @@ def get_organism(gse):
 
 #### Config ####
 workdir: "/rds/project/rs2099/rds-rs2099-toxgenomics/sita_slam-seq/"
-localrules: all
+localrules: all, alleyoop_collapse, make_count_tables
 
 PREFIX = f"data/{config['GSE']}"
 
@@ -28,7 +28,8 @@ elif ORGANISM == "Mus musculus":
 #### Workflow ####
 rule all:
     input:
-        expand(f"{PREFIX}/out/count/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_tcount.csv", sample=SAMPLES)
+        total = f"{PREFIX}/out/processed/{config['GSE']}_counts_total.txt",
+        nascent = f"{PREFIX}/out/processed/{config['GSE']}_counts_nascent.txt"
 
 rule trim_galore:
     input:
@@ -52,7 +53,7 @@ rule slam_dunk:
         expand(f"{PREFIX}/out/map/{{sample}}_trimmed.fq_slamdunk_mapped.bam", sample=SAMPLES),
         expand(f"{PREFIX}/out/filter/{{sample}}_trimmed.fq_slamdunk_mapped_filtered.bam", sample=SAMPLES),
         expand(f"{PREFIX}/out/snp/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_snp.vcf", sample=SAMPLES),
-        expand(f"{PREFIX}/out/count/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_tcount.csv", sample=SAMPLES)
+        expand(f"{PREFIX}/out/count/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_tcount.tsv", sample=SAMPLES)
     resources:
         time_min = 360,
         nodes = 1,
@@ -71,16 +72,35 @@ rule slam_dunk:
         -n 100 -m \
         -5 12 \
         -c 2 \
+        -rl 100 \
         -mv 0.2 \
         -mbq 27 \
         -o {PREFIX}/out \
         -t {{resources.cpus}} \
         {{input}}"""
 
-# rule alleyoop_collapse:
-#     input:
-#         "out/count/{sample}_trimmed.fq_slamdunk_mapped_filtered_tcount.csv"
-#     output:
-#         "out/count/{sample}_trimmed.fq_slamdunk_mapped_filtered_tcount_collapsed.csv"
-#     shell:
-#         "singularity exec ../slamdunk.simg alleyoop collapse -o out/count {input}"
+rule alleyoop_collapse:
+    input:
+        expand(f"{PREFIX}/out/count/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_tcount.tsv", sample=SAMPLES)
+    output:
+        expand(f"{PREFIX}/out/count/{{sample}}.csv", sample=SAMPLES)
+    run:
+        for sample in input:
+            shell(f"alleyoop collapse -o {PREFIX}/out/count {sample}")
+
+            collapse_out = sample.replace('.tsv', '_collapsed.csv')
+            shell(f"mv {collapse_out} {collapse_out.replace('_trimmed.fq_slamdunk_mapped_filtered_tcount_collapsed', '')}")
+
+rule make_count_tables:
+    input:
+        expand(f"{PREFIX}/out/count/{{sample}}.csv", sample=SAMPLES)
+    output:
+        total = f"{PREFIX}/out/processed/{config['GSE']}_counts_total.txt",
+        nascent = f"{PREFIX}/out/processed/{config['GSE']}_counts_nascent.txt"
+    run:
+        shell("module load libxml2-2.9.8-gcc-5.4.0-sy2r4k7")
+        shell("module load r-4.0.2-gcc-5.4.0-xyx46xb")
+
+        shell(f"Rscript /home/xwy21/project/sita_slam-seq/script/create_count_matrix.R \
+        -c {PREFIX}/out/count \
+        -g {config['GSE']}")
