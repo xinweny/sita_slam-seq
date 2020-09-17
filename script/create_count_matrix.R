@@ -57,9 +57,9 @@ if(length(countFiles) > 1) {
 
 if (!dir.exists(file.path('data', opt$gse, 'out', 'processed'))) { dir.create(file.path('data', opt$gse, 'out', 'processed')) }
 
-write.table(counts.total,
+write.table(counts.total[-nrow(counts.total), ],
             file.path('data', opt$gse, 'out', 'processed', paste0(opt$gse, '_counts_total.txt')),
             row.names=FALSE, col.names=TRUE, sep="\t", quote=FALSE)
-write.table(counts.nascent,
+write.table(counts.nascent[-nrow(counts.nascent), ],
             file.path('data', opt$gse, 'out', 'processed', paste0(opt$gse, '_counts_nascent.txt')),
             row.names=FALSE, col.names=TRUE, sep="\t", quote=FALSE)

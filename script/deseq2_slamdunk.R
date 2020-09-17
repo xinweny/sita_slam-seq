@@ -99,7 +99,7 @@ getContrast <- function(counts, dds, case, control) {
   results <- results(dds, contrast=c('condition', case, control))
   results <- data.frame(gene_name=as.character(rownames(dds)),
                         log2FC_deseq2=results$log2FoldChange,
-                        padj=results=padj)
+                        padj=results$padj)
   
   results <- results[which(results$padj != 'NA'), ]
   
