@@ -3,33 +3,36 @@ import glob, os
 import pandas as pd
 
 #### Functions ####
-def get_organism(gse):
-    metadata_df = pd.read_csv(f"{PREFIX}/SraRunTable_{gse}.txt", header=0, sep=',')
+def get_organism(metadata_path):
+    metadata = pd.read_csv(metadata_path, header=0, sep=',')
+    organism_name = metadata['Organism'][0]
 
-    return metadata_df['Organism'][0]
+    return organism_name.replace(' ', '_').lower()
 
 #### Config ####
-workdir: "/rds/project/rs2099/rds-rs2099-toxgenomics/sita_slam-seq/"
-localrules: all, alleyoop_collapse, make_count_tables
+configfile: "config/config.yaml"
+workdir: config['base']
+localrules: all, alleyoop_collapse, make_count_tables, alleyoop_summary
 
 PREFIX = f"data/{config['GSE']}"
 
 SAMPLES = [os.path.basename(sample).replace('.fq.gz', '') for sample in glob.glob(f"{PREFIX}/fastq/*.fq.gz")
            if not "trimmed" in os.path.basename(sample)]
-ORGANISM = get_organism(config['GSE'])
 
-if ORGANISM == "Homo sapiens":
-    FASTA = "/rds/project/rs2099/rds-rs2099-toxgenomics/shared/human/GRCh38.primary_assembly.genome.fa"
-    BED_UTR = "/rds/project/rs2099/rds-rs2099-toxgenomics/shared/human/GRCh38_gencode.v34_3UTR.bed"
-elif ORGANISM == "Mus musculus":
-    FASTA = "/rds/project/rs2099/rds-rs2099-toxgenomics/shared/mouse/GRCm38.primary_assembly.genome.fa"
-    BED_UTR = "/rds/project/rs2099/rds-rs2099-toxgenomics/shared/mouse/GRCm38_gencode.vM25_3UTR.bed"
+if os.path.exists(f"{PREFIX}/SraRunTable_{config['GSE']}.txt"):
+    ORGANISM = get_organism(f"{PREFIX}/SraRunTable_{config['GSE']}.txt")
+else:
+    ORGANISM = config['organism']
 
 #### Workflow ####
 rule all:
     input:
-        total = f"{PREFIX}/out/processed/{config['GSE']}_counts_total.txt",
-        nascent = f"{PREFIX}/out/processed/{config['GSE']}_counts_nascent.txt"
+        f"{PREFIX}/out/processed/{config['GSE']}_counts_total.txt",
+        f"{PREFIX}/out/processed/{config['GSE']}_counts_nascent.txt",
+        expand(f"{PREFIX}/out/processed/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_overallrates.csv", sample=SAMPLES),
+        expand(f"{PREFIX}/out/processed/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_overallrates.pdf", sample=SAMPLES),
+        expand(f"{PREFIX}/out/processed/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_mutationrates_utr.csv", sample=SAMPLES),
+        expand(f"{PREFIX}/out/processed/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_mutationrates_utr.pdf", sample=SAMPLES)
 
 rule trim_galore:
     input:
@@ -44,7 +47,7 @@ rule trim_galore:
         tasks = 1,
         cpus = len(SAMPLES) if len(SAMPLES) < 32 else 32
     shell:
-        "trim_galore -j {resources.cpus} -o fastq --stringency 3 {input}"
+        f"trim_galore -j {{resources.cpus}} -o {PREFIX}/fastq --stringency 3 {{input}}"
 
 rule slam_dunk:
     input:
@@ -55,14 +58,14 @@ rule slam_dunk:
         expand(f"{PREFIX}/out/snp/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_snp.vcf", sample=SAMPLES),
         expand(f"{PREFIX}/out/count/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_tcount.tsv", sample=SAMPLES)
     resources:
-        time_min = 360,
+        time_min = 720,
         nodes = 1,
         tasks = 1,
         cpus = len(SAMPLES) if len(SAMPLES) < 32 else 32
     params:
         job_name = f"{config['GSE']}_SLAMDUNK",
-        fasta = FASTA,
-        bed_utr = BED_UTR
+        fasta = config[ORGANISM]['fasta'],
+        bed_utr = config[ORGANISM]['bed_utr']
     conda:
         "envs/slam-seq.yml"
     shell:
@@ -98,9 +101,57 @@ rule make_count_tables:
         total = f"{PREFIX}/out/processed/{config['GSE']}_counts_total.txt",
         nascent = f"{PREFIX}/out/processed/{config['GSE']}_counts_nascent.txt"
     run:
-        shell("module load libxml2-2.9.8-gcc-5.4.0-sy2r4k7")
-        shell("module load r-4.0.2-gcc-5.4.0-xyx46xb")
-
-        shell(f"Rscript /home/xwy21/project/sita_slam-seq/script/create_count_matrix.R \
+        shell(f"Rscript script/create_count_matrix.R \
         -c {PREFIX}/out/count \
         -g {config['GSE']}")
+
+rule alleyoop_summary:
+    input:
+        expand(f"{PREFIX}/out/filter/{{sample}}_trimmed.fq_slamdunk_mapped_filtered.bam", sample=SAMPLES)
+    output:
+        f"{PREFIX}/out/processed/{config['GSE']}_summary.tsv",
+        f"{PREFIX}/out/processed/{config['GSE']}_summary_PCA.pdf",
+        f"{PREFIX}/out/processed/{config['GSE']}_summary_PCA.txt"
+    shell:
+        f"alleyoop summary -o {PREFIX}/out/processed/{config['GSE']}_summary.tsv -t {PREFIX}/out/count {{input}}"
+
+rule alleyoop_rates:
+    input:
+        expand(f"{PREFIX}/out/filter/{{sample}}_trimmed.fq_slamdunk_mapped_filtered.bam", sample=SAMPLES)
+    output:
+        expand(f"{PREFIX}/out/processed/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_overallrates.csv", sample=SAMPLES),
+        expand(f"{PREFIX}/out/processed/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_overallrates.pdf", sample=SAMPLES)
+    resources:
+        time_min = 120,
+        nodes = 1,
+        tasks = 1,
+        cpus = len(SAMPLES) if len(SAMPLES) < 32 else 32
+    params:
+        job_name = f"{config['GSE']}_RATES",
+        fasta = config[ORGANISM]['fasta']
+    conda:
+        "envs/slam-seq.yml"
+    shell:
+        f"alleyoop rates -t {{resources.cpus}} \
+        -o {PREFIX}/out/processed -r {{params.fasta}} {{input}}"
+
+rule alleyoop_utrrates:
+    input:
+        expand(f"{PREFIX}/out/filter/{{sample}}_trimmed.fq_slamdunk_mapped_filtered.bam", sample=SAMPLES)
+    output:
+        expand(f"{PREFIX}/out/processed/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_mutationrates_utr.csv", sample=SAMPLES),
+        expand(f"{PREFIX}/out/processed/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_mutationrates_utr.pdf", sample=SAMPLES)
+    resources:
+        time_min = 120,
+        nodes = 1,
+        tasks = 1,
+        cpus = len(SAMPLES) if len(SAMPLES) < 32 else 32
+    params:
+        job_name = f"{config['GSE']}_UTRRATES",
+        fasta = config[ORGANISM]['fasta'],
+        bed_utr = config[ORGANISM]['bed_utr']
+    conda:
+        "envs/slam-seq.yml"
+    shell:
+        f"alleyoop utrrates -t {{resources.cpus}} -m --max-read-length 100 \
+        -o {PREFIX}/out/processed -r {{params.fasta}} -b {{params.bed_utr}} {{input}}"

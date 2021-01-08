@@ -104,8 +104,10 @@ MAPlot <- function(results, case, control, cutoff) {
   
   dereg <- results[which(results$padj <= cutoff), ] # all significant deregulated genes
   nonsig <- results[!(results$gene_name %in% dereg$gene_name), ] # non-significant deregulated genes
+  
   down <- nrow(dereg[dereg$log2FoldChange < 0, ]) # downregulated genes
   up <- nrow(dereg[dereg$log2FoldChange > 0, ]) # upregulated genes
+  
   top.dereg <- dereg[order(abs(dereg$log2FoldChange), decreasing=TRUE)[1:20], 1]
   top.dereg <- top.dereg[!is.na(top.dereg)]
   
@@ -148,10 +150,14 @@ MAPlot <- function(results, case, control, cutoff) {
 #### Set working directory ####
 setwd("/Users/Pomato/mrc/project/sita_slam-seq/processed")
 
-#### Script ####
+#########################
+#### Start of Script ####
+#########################
+
 counts.nascent <- read.table(paste0(gse, "_counts_nascent.txt"), header=TRUE, sep="\t", row.names=1, check.names=FALSE)
 counts.total <- read.table(paste0(gse, "_counts_total.txt"), header=TRUE, sep="\t", row.names=1, check.names=FALSE)
 
+# DESeq2 analysis
 resultsLFC <- deAnalysis(counts.nascent, counts.total, selectConditions, alpha)
 
 # Add Ensembl symbol
@@ -166,10 +172,10 @@ write.table(resultsLFC$total,
             row.names=TRUE, col.names=TRUE, sep="\t")
 
 # MA plot
-png(glue("{gse}_MAPlotNascent_{resultsLFC$conditions[1]}.{resultsLFC$conditions[2]}.png"))
+png(glue("{gse}_MAplotNascent_{resultsLFC$conditions[1]}.{resultsLFC$conditions[2]}.png"))
 MAPlot(resultsLFC$nascent, resultsLFC$conditions[1], resultsLFC$conditions[2], alpha)
 dev.off()
 
-png(glue("{gse}_MAPlotTotal_{resultsLFC$conditions[1]}.{resultsLFC$conditions[2]}.png"))
+png(glue("{gse}_MAplotTotal_{resultsLFC$conditions[1]}.{resultsLFC$conditions[2]}.png"))
 MAPlot(resultsLFC$total, resultsLFC$conditions[1], resultsLFC$conditions[2], alpha)
 dev.off()
