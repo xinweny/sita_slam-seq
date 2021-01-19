@@ -1,0 +1,212 @@
+#### Packages ####
+import glob, os
+import pandas as pd
+
+#### Functions ####
+def get_organism(metadata_path):
+    metadata = pd.read_csv(metadata_path, header=0, sep=',')
+    organism_name = metadata['Organism'][0]
+
+    return organism_name.replace(' ', '_').lower()
+
+def custom_param(name, default):
+    try:
+        param = config[name]
+
+        return param
+
+    except KeyError:
+        return default
+
+#### Config ####
+configfile: "config/config.yaml"
+workdir: config['base']
+localrules: all, alleyoop_collapse, make_count_tables, alleyoop_summary
+
+PREFIX = f"data/{config['GSE']}"
+FQ_EXT = custom_param('fq_ext', '.fastq.gz')
+
+SAMPLES = set([os.path.basename(sample).replace(FQ_EXT, '') for sample in glob.glob(f"{PREFIX}/fastq/*{FQ_EXT}")
+           if not any(match in os.path.basename(sample) for match in ['trimmed', 'val', '_R2'])])
+
+if os.path.exists(f"{PREFIX}/SraRunTable_{config['GSE']}.txt"):
+    ORGANISM = get_organism(f"{PREFIX}/SraRunTable_{config['GSE']}.txt")
+else:
+    ORGANISM = config['organism']
+
+#### Workflow ####
+rule all:
+    input:
+        expand(f"{PREFIX}/map/{{sample}}_trimmed.fq_slamdunk_mapped.bam", sample=SAMPLES),
+        expand(f"{PREFIX}/filter/{{sample}}_trimmed.fq_slamdunk_mapped_filtered.bam", sample=SAMPLES),
+        expand(f"{PREFIX}/snp/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_snp.vcf", sample=SAMPLES),
+        expand(f"{PREFIX}/count/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_tcount.tsv", sample=SAMPLES),
+        f"{PREFIX}/processed/{config['GSE']}_counts_total.txt",
+        f"{PREFIX}/processed/{config['GSE']}_counts_nascent.txt",
+        expand(f"{PREFIX}/processed/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_overallrates.csv", sample=SAMPLES),
+        expand(f"{PREFIX}/processed/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_overallrates.pdf", sample=SAMPLES),
+        expand(f"{PREFIX}/processed/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_mutationrates_utr.csv", sample=SAMPLES),
+        expand(f"{PREFIX}/processed/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_mutationrates_utr.pdf", sample=SAMPLES)
+
+rule trim_galore:
+    input:
+        expand(f"{PREFIX}/fastq/{{sample}}{FQ_EXT}", sample=SAMPLES)
+    output:
+        expand(f"{PREFIX}/fastq/{{sample}}_trimmed.fq.gz", sample=SAMPLES)
+    params:
+        job_name = f"{config['GSE']}_TRIM"
+    resources:
+        time_min = 120, cpus = len(SAMPLES) if len(SAMPLES) < 32 else 32
+    shell:
+        f"trim_galore -j {{resources.cpus}} -o {PREFIX}/fastq --stringency 3 {{input}}"
+
+rule slamdunk_map:
+    input:
+        f"{PREFIX}/fastq/{{sample}}_trimmed.fq.gz"
+    output:
+        f"{PREFIX}/map/{{sample}}_trimmed.fq_slamdunk_mapped.bam"
+    resources:
+        time_min = 720, cpus = 32
+    params:
+        job_name = f"{config['GSE']}_SLAMDUNK_MAP",
+        fasta = config[ORGANISM]['fasta']
+    conda:
+        "envs/slam-seq.yml"
+    shell:
+        f"""slamdunk map -r {{params.fasta}} \
+        -5 12 -n 100 \
+        -t {{resources.cpus}} \
+        -o {PREFIX}/map \
+        {{input}}"""
+
+rule slamdunk_filter:
+    input:
+        expand(f"{PREFIX}/map/{{sample}}_trimmed.fq_slamdunk_mapped.bam", sample=SAMPLES)
+    output:
+        expand(f"{PREFIX}/filter/{{sample}}_trimmed.fq_slamdunk_mapped_filtered.bam", sample=SAMPLES)
+    resources:
+        time_min = 60, cpus = 1
+    params:
+        job_name = f"{config['GSE']}_SLAMDUNK_FILTER",
+        bed_utr = config[ORGANISM]['bed_utr']
+    conda:
+        "envs/slam-seq.yml"
+    shell:
+        f"""slamdunk filter -b {{params.bed_utr}} \
+        -m \
+        -o {PREFIX}/filter \
+        {{input}}"""
+
+rule slamdunk_snp:
+    input:
+        rules.slamdunk_filter.output
+    output:
+        expand(f"{PREFIX}/snp/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_snp.vcf", sample=SAMPLES)
+    resources:
+        time_min = 180, cpus = len(SAMPLES) if len(SAMPLES) < 32 else 32
+    params:
+        job_name = f"{config['GSE']}_SLAMDUNK_SNP",
+        fasta = config[ORGANISM]['fasta']
+    conda:
+        "envs/slam-seq.yml"
+    shell:
+        f"""slamdunk snp -r {{params.fasta}} \
+        -c 2 -f 0.2 \
+        -t {{resources.cpus}} \
+        -o {PREFIX}/snp \
+        {{input}}"""
+
+rule slamdunk_count:
+    input:
+        rules.slamdunk_snp.output
+    output:
+        expand(f"{PREFIX}/count/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_tcount.tsv", sample=SAMPLES)
+    resources:
+        time_min = 180, cpus = len(SAMPLES) if len(SAMPLES) < 32 else 32
+    params:
+        job_name = f"{config['GSE']}_SLAMDUNK_COUNT",
+        fasta = config[ORGANISM]['fasta'],
+        bed_utr = config[ORGANISM]['bed_utr']
+    conda:
+        "envs/slam-seq.yml"
+    shell:
+        f"""slamdunk count -s {PREFIX}/snp -r {{params.fasta}} -b {{params.bed_utr}} \
+        -l 100 -q 27 \
+        -t {{resources.cpus}} \
+        -o {PREFIX}/count \
+        {{input}}"""
+
+rule alleyoop_collapse:
+    input:
+        rules.slamdunk_count.output
+    output:
+        expand(f"{PREFIX}/count/{{sample}}.csv", sample=SAMPLES)
+    run:
+        for sample in input:
+            shell(f"alleyoop collapse -o {PREFIX}/out/count {sample}")
+
+            collapse_out = sample.replace('.tsv', '_collapsed.csv')
+            shell(f"mv {collapse_out} {collapse_out.replace('_trimmed.fq_slamdunk_mapped_filtered_tcount_collapsed', '')}")
+
+rule make_count_tables:
+    input:
+        rules.alleyoop_collapse.output
+    output:
+        total = f"{PREFIX}/processed/{config['GSE']}_counts_total.txt",
+        nascent = f"{PREFIX}/processed/{config['GSE']}_counts_nascent.txt"
+    shell:
+        f"""Rscript script/create_count_matrix.R \
+        -c {PREFIX}/count \
+        -g {config['GSE']}"""
+
+rule alleyoop_summary:
+    input:
+        rules.slamdunk_filter.output
+    output:
+        f"{PREFIX}/processed/{config['GSE']}_summary.tsv",
+        f"{PREFIX}/processed/{config['GSE']}_summary_PCA.pdf",
+        f"{PREFIX}/processed/{config['GSE']}_summary_PCA.txt"
+    shell:
+        f"""alleyoop summary -o {PREFIX}/processed/{config['GSE']}_summary.tsv \
+        -t {PREFIX}/count \
+        {{input}}"""
+
+rule alleyoop_rates:
+    input:
+        rules.slamdunk_filter.output
+    output:
+        expand(f"{PREFIX}/processed/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_overallrates.csv", sample=SAMPLES),
+        expand(f"{PREFIX}/processed/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_overallrates.pdf", sample=SAMPLES)
+    resources:
+        time_min = 120, cpus = len(SAMPLES) if len(SAMPLES) < 32 else 32
+    params:
+        job_name = f"{config['GSE']}_RATES",
+        fasta = config[ORGANISM]['fasta']
+    conda:
+        "envs/slam-seq.yml"
+    shell:
+        f"""alleyoop rates -r {{params.fasta}} \
+        -t {{resources.cpus}} \
+        -o {PREFIX}/processed \
+        {{input}}"""
+
+rule alleyoop_utrrates:
+    input:
+        rules.slamdunk_filter.output
+    output:
+        expand(f"{PREFIX}/processed/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_mutationrates_utr.csv", sample=SAMPLES),
+        expand(f"{PREFIX}/processed/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_mutationrates_utr.pdf", sample=SAMPLES)
+    resources:
+        time_min = 120, cpus = len(SAMPLES) if len(SAMPLES) < 32 else 32
+    params:
+        job_name = f"{config['GSE']}_UTRRATES",
+        fasta = config[ORGANISM]['fasta'],
+        bed_utr = config[ORGANISM]['bed_utr']
+    conda:
+        "envs/slam-seq.yml"
+    shell:
+        f"""alleyoop utrrates -r {{params.fasta}} -b {{params.bed_utr}} \
+        -m --max-read-length 100 \
+        -t {{resources.cpus}} \
+        -o {PREFIX}/processed \
+        {{input}}"""

@@ -1,0 +1,7 @@
+base: "/rds/project/rs2099/rds-rs2099-toxgenomics/sita_slam-seq/"
+homo_sapiens:
+  fasta: "/rds/project/rs2099/rds-rs2099-toxgenomics/shared/human/GRCh38.primary_assembly.genome.fa"
+  bed_utr: "/rds/project/rs2099/rds-rs2099-toxgenomics/shared/human/GRCh38_gencode.v34_3UTR.bed"
+mus_musculus:
+  fasta: "/rds/project/rs2099/rds-rs2099-toxgenomics/shared/mouse/GRCm38.primary_assembly.genome.fa"
+  bed_utr: "/rds/project/rs2099/rds-rs2099-toxgenomics/shared/mouse/GRCm38_gencode.vM25_3UTR.bed"
