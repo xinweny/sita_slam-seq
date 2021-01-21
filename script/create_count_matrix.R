@@ -25,7 +25,7 @@ library(tidyverse)
 parseSample <- function(file, type) {
   # Get sample name
   name <- basename(file)
-  name <- sub('.csv', '', name)
+  name <- sub('_trimmed.fq_slamdunk_mapped_filtered_tcount_collapsed.csv', '', name)
   
   # Get raw and normalised counts
   countTab <- read.csv(file, header=TRUE, sep="\t")

@@ -40,12 +40,13 @@ rule all:
         expand(f"{PREFIX}/filter/{{sample}}_trimmed.fq_slamdunk_mapped_filtered.bam", sample=SAMPLES),
         expand(f"{PREFIX}/snp/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_snp.vcf", sample=SAMPLES),
         expand(f"{PREFIX}/count/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_tcount.tsv", sample=SAMPLES),
-        f"{PREFIX}/processed/{config['GSE']}_counts_total.txt",
-        f"{PREFIX}/processed/{config['GSE']}_counts_nascent.txt",
-        expand(f"{PREFIX}/processed/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_overallrates.csv", sample=SAMPLES),
-        expand(f"{PREFIX}/processed/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_overallrates.pdf", sample=SAMPLES),
-        expand(f"{PREFIX}/processed/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_mutationrates_utr.csv", sample=SAMPLES),
-        expand(f"{PREFIX}/processed/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_mutationrates_utr.pdf", sample=SAMPLES)
+        expand(f"{PREFIX}/collapsed/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_tcount_collapsed.csv", sample=SAMPLES),
+        f"{PREFIX}/collapsed/{config['GSE']}_counts_total.txt",
+        f"{PREFIX}/collapsed/{config['GSE']}_counts_nascent.txt",
+        expand(f"{PREFIX}/stats/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_overallrates.csv", sample=SAMPLES),
+        expand(f"{PREFIX}/stats/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_overallrates.pdf", sample=SAMPLES),
+        expand(f"{PREFIX}/stats/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_mutationrates_utr.csv", sample=SAMPLES),
+        expand(f"{PREFIX}/stats/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_mutationrates_utr.pdf", sample=SAMPLES)
 
 rule trim_galore:
     input:
@@ -133,58 +134,58 @@ rule slamdunk_count:
 
 rule alleyoop_collapse:
     input:
-        f"{PREFIX}/count/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_tcount.tsv"
+        expand(f"{PREFIX}/count/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_tcount.tsv", sample=SAMPLES)
     output:
-        f"{PREFIX}/count/{{sample}}.csv"
+        expand(f"{PREFIX}/collapsed/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_tcount_collapsed.csv", sample=SAMPLES)
     resources:
-        time_min = 10, cpus = 1
+        time_min = 10, cpus = len(SAMPLES) if len(SAMPLES) < 32 else 32
     params:
-        collapse_output = f"{PREFIX}/count/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_tcount_collapsed.csv"
-        job_name = f"{config['GSE']}_ALLEYOOP_COLLAPSE_{{sample}}"
+        job_name = f"{config['GSE']}_ALLEYOOP_COLLAPSE"
     conda:
         "envs/slam-seq.yml"
     shell:
-        f"""alleyoop collapse -o {PREFIX}/out/count {{input}}
-        mv {{params.collapse_output}} {{output}}"""
+        f"""alleyoop collapse -o {PREFIX}/collapsed \
+        -t {{resources.cpus}} \
+        {{input}}"""
 
 rule make_count_tables:
     input:
-        expand(f"{PREFIX}/count/{{sample}}.csv", sample=SAMPLES)
+        rules.alleyoop_collapse.output
     output:
-        total = f"{PREFIX}/processed/{config['GSE']}_counts_total.txt",
-        nascent = f"{PREFIX}/processed/{config['GSE']}_counts_nascent.txt"
+        total = f"{PREFIX}/collapsed/{config['GSE']}_counts_total.txt",
+        nascent = f"{PREFIX}/collapsed/{config['GSE']}_counts_nascent.txt"
     resources:
         time_min = 30, cpus = 1
     params:
         job_name = f"{config['GSE']}_COUNTTABLE"
     shell:
         f"""Rscript script/create_count_matrix.R \
-        -c {PREFIX}/count \
+        -c {PREFIX}/collapsed \
         -g {config['GSE']}"""
 
 rule alleyoop_summary:
     input:
         rules.slamdunk_filter.output
     output:
-        f"{PREFIX}/processed/{config['GSE']}_summary.tsv",
-        f"{PREFIX}/processed/{config['GSE']}_summary_PCA.pdf",
-        f"{PREFIX}/processed/{config['GSE']}_summary_PCA.txt"
+        f"{PREFIX}/stats/{config['GSE']}_summary.tsv",
+        f"{PREFIX}/stats/{config['GSE']}_summary_PCA.pdf",
+        f"{PREFIX}/stats/{config['GSE']}_summary_PCA.txt"
     resources:
         time_min = 10, cpus = 1
     params:
         job_name = f"{config['GSE']}_ALLEYOOP_SUMMARY"
     conda: "envs/slam-seq.yml"
     shell:
-        f"""alleyoop summary -o {PREFIX}/processed/{config['GSE']}_summary.tsv \
-        -t {PREFIX}/count \
+        f"""alleyoop summary -o {PREFIX}/stats/{config['GSE']}_summary.tsv \
+        -t {PREFIX}/stats \
         {{input}}"""
 
 rule alleyoop_rates:
     input:
         rules.slamdunk_filter.output
     output:
-        expand(f"{PREFIX}/processed/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_overallrates.csv", sample=SAMPLES),
-        expand(f"{PREFIX}/processed/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_overallrates.pdf", sample=SAMPLES)
+        expand(f"{PREFIX}/stats/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_overallrates.csv", sample=SAMPLES),
+        expand(f"{PREFIX}/stats/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_overallrates.pdf", sample=SAMPLES)
     resources:
         time_min = 120, cpus = len(SAMPLES) if len(SAMPLES) < 32 else 32
     params:
@@ -194,15 +195,15 @@ rule alleyoop_rates:
     shell:
         f"""alleyoop rates -r {{params.fasta}} \
         -t {{resources.cpus}} \
-        -o {PREFIX}/processed \
+        -o {PREFIX}/stats \
         {{input}}"""
 
 rule alleyoop_utrrates:
     input:
         rules.slamdunk_filter.output
     output:
-        expand(f"{PREFIX}/processed/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_mutationrates_utr.csv", sample=SAMPLES),
-        expand(f"{PREFIX}/processed/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_mutationrates_utr.pdf", sample=SAMPLES)
+        expand(f"{PREFIX}/stats/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_mutationrates_utr.csv", sample=SAMPLES),
+        expand(f"{PREFIX}/stats/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_mutationrates_utr.pdf", sample=SAMPLES)
     resources:
         time_min = 120, cpus = len(SAMPLES) if len(SAMPLES) < 32 else 32
     params:
@@ -214,5 +215,5 @@ rule alleyoop_utrrates:
         f"""alleyoop utrrates -r {{params.fasta}} -b {{params.bed_utr}} \
         -m --max-read-length 100 \
         -t {{resources.cpus}} \
-        -o {PREFIX}/processed \
+        -o {PREFIX}/stats \
         {{input}}"""
