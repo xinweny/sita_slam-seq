@@ -21,7 +21,6 @@ def custom_param(name, default):
 #### Config ####
 configfile: "config/config.yaml"
 workdir: config['base']
-localrules: all, alleyoop_collapse, make_count_tables, alleyoop_summary
 
 PREFIX = f"data/{config['GSE']}"
 FQ_EXT = custom_param('fq_ext', '.fastq.gz')
@@ -66,15 +65,14 @@ rule slamdunk_map:
     output:
         f"{PREFIX}/map/{{sample}}_trimmed.fq_slamdunk_mapped.bam"
     resources:
-        time_min = 720, cpus = int(custom_param('map_threads', 32))
+        time_min = 120, cpus = int(custom_param('map_threads', 32))
     params:
         job_name = f"{config['GSE']}_SLAMDUNK_MAP_{{sample}}",
         fasta = config[ORGANISM]['fasta']
-    conda:
-        "envs/slam-seq.yml"
+    conda: "envs/slam-seq.yml"
     shell:
         f"""slamdunk map -r {{params.fasta}} \
-        -5 12 -n 1 \
+        -5 12 -n 100 \
         -t {{resources.cpus}} \
         -o {PREFIX}/map \
         {{input}}"""
@@ -85,12 +83,11 @@ rule slamdunk_filter:
     output:
         expand(f"{PREFIX}/filter/{{sample}}_trimmed.fq_slamdunk_mapped_filtered.bam", sample=SAMPLES)
     resources:
-        time_min = 720, cpus = int(custom_param('filter_threads', len(SAMPLES) if len(SAMPLES) < 32 else 32))
+        time_min = 120, cpus = int(custom_param('filter_threads', len(SAMPLES) if len(SAMPLES) < 32 else 32))
     params:
         job_name = f"{config['GSE']}_SLAMDUNK_FILTER",
         bed_utr = config[ORGANISM]['bed_utr']
-    conda:
-        "envs/slam-seq.yml"
+    conda: "envs/slam-seq.yml"
     shell:
         f"""slamdunk filter -b {{params.bed_utr}} \
         -t {{resources.cpus}} \
@@ -103,12 +100,11 @@ rule slamdunk_snp:
     output:
         expand(f"{PREFIX}/snp/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_snp.vcf", sample=SAMPLES)
     resources:
-        time_min = 720, cpus = int(custom_param('snp_threads', len(SAMPLES) if len(SAMPLES) < 32 else 32))
+        time_min = 120, cpus = int(custom_param('snp_threads', len(SAMPLES) if len(SAMPLES) < 32 else 32))
     params:
         job_name = f"{config['GSE']}_SLAMDUNK_SNP",
         fasta = config[ORGANISM]['fasta']
-    conda:
-        "envs/slam-seq.yml"
+    conda: "envs/slam-seq.yml"
     shell:
         f"""slamdunk snp -r {{params.fasta}} \
         -c 2 -f 0.2 \
@@ -118,17 +114,16 @@ rule slamdunk_snp:
 
 rule slamdunk_count:
     input:
-        rules.slamdunk_snp.output
+        rules.slamdunk_filter.output
     output:
         expand(f"{PREFIX}/count/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_tcount.tsv", sample=SAMPLES)
     resources:
-        time_min = 720, cpus = int(custom_param('count_threads', len(SAMPLES) if len(SAMPLES) < 32 else 32))
+        time_min = 120, cpus = int(custom_param('count_threads', len(SAMPLES) if len(SAMPLES) < 32 else 32))
     params:
         job_name = f"{config['GSE']}_SLAMDUNK_COUNT",
         fasta = config[ORGANISM]['fasta'],
         bed_utr = config[ORGANISM]['bed_utr']
-    conda:
-        "envs/slam-seq.yml"
+    conda: "envs/slam-seq.yml"
     shell:
         f"""slamdunk count -s {PREFIX}/snp -r {{params.fasta}} -b {{params.bed_utr}} \
         -l 100 -q 27 \
@@ -138,22 +133,30 @@ rule slamdunk_count:
 
 rule alleyoop_collapse:
     input:
-        rules.slamdunk_count.output
+        f"{PREFIX}/count/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_tcount.tsv"
     output:
-        expand(f"{PREFIX}/count/{{sample}}.csv", sample=SAMPLES)
-    run:
-        for sample in input:
-            shell(f"alleyoop collapse -o {PREFIX}/out/count {sample}")
-
-            collapse_out = sample.replace('.tsv', '_collapsed.csv')
-            shell(f"mv {collapse_out} {collapse_out.replace('_trimmed.fq_slamdunk_mapped_filtered_tcount_collapsed', '')}")
+        f"{PREFIX}/count/{{sample}}.csv"
+    resources:
+        time_min = 10, cpus = 1
+    params:
+        collapse_output = f"{PREFIX}/count/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_tcount_collapsed.csv"
+        job_name = f"{config['GSE']}_ALLEYOOP_COLLAPSE_{{sample}}"
+    conda:
+        "envs/slam-seq.yml"
+    shell:
+        f"""alleyoop collapse -o {PREFIX}/out/count {{input}}
+        mv {{params.collapse_output}} {{output}}"""
 
 rule make_count_tables:
     input:
-        rules.alleyoop_collapse.output
+        expand(f"{PREFIX}/count/{{sample}}.csv", sample=SAMPLES)
     output:
         total = f"{PREFIX}/processed/{config['GSE']}_counts_total.txt",
         nascent = f"{PREFIX}/processed/{config['GSE']}_counts_nascent.txt"
+    resources:
+        time_min = 30, cpus = 1
+    params:
+        job_name = f"{config['GSE']}_COUNTTABLE"
     shell:
         f"""Rscript script/create_count_matrix.R \
         -c {PREFIX}/count \
@@ -166,6 +169,11 @@ rule alleyoop_summary:
         f"{PREFIX}/processed/{config['GSE']}_summary.tsv",
         f"{PREFIX}/processed/{config['GSE']}_summary_PCA.pdf",
         f"{PREFIX}/processed/{config['GSE']}_summary_PCA.txt"
+    resources:
+        time_min = 10, cpus = 1
+    params:
+        job_name = f"{config['GSE']}_ALLEYOOP_SUMMARY"
+    conda: "envs/slam-seq.yml"
     shell:
         f"""alleyoop summary -o {PREFIX}/processed/{config['GSE']}_summary.tsv \
         -t {PREFIX}/count \
@@ -182,8 +190,7 @@ rule alleyoop_rates:
     params:
         job_name = f"{config['GSE']}_RATES",
         fasta = config[ORGANISM]['fasta']
-    conda:
-        "envs/slam-seq.yml"
+    conda: "envs/slam-seq.yml"
     shell:
         f"""alleyoop rates -r {{params.fasta}} \
         -t {{resources.cpus}} \
@@ -202,8 +209,7 @@ rule alleyoop_utrrates:
         job_name = f"{config['GSE']}_UTRRATES",
         fasta = config[ORGANISM]['fasta'],
         bed_utr = config[ORGANISM]['bed_utr']
-    conda:
-        "envs/slam-seq.yml"
+    conda: "envs/slam-seq.yml"
     shell:
         f"""alleyoop utrrates -r {{params.fasta}} -b {{params.bed_utr}} \
         -m --max-read-length 100 \
