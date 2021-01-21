@@ -41,8 +41,8 @@ rule all:
         expand(f"{PREFIX}/snp/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_snp.vcf", sample=SAMPLES),
         expand(f"{PREFIX}/count/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_tcount.tsv", sample=SAMPLES),
         expand(f"{PREFIX}/collapsed/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_tcount_collapsed.csv", sample=SAMPLES),
-        f"{PREFIX}/collapsed/{config['GSE']}_counts_total.txt",
-        f"{PREFIX}/collapsed/{config['GSE']}_counts_nascent.txt",
+        f"{PREFIX}/processed/{config['GSE']}_counts_total.txt",
+        f"{PREFIX}/processed/{config['GSE']}_counts_nascent.txt",
         expand(f"{PREFIX}/stats/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_overallrates.csv", sample=SAMPLES),
         expand(f"{PREFIX}/stats/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_overallrates.pdf", sample=SAMPLES),
         expand(f"{PREFIX}/stats/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_mutationrates_utr.csv", sample=SAMPLES),
@@ -152,8 +152,8 @@ rule make_count_tables:
     input:
         rules.alleyoop_collapse.output
     output:
-        total = f"{PREFIX}/collapsed/{config['GSE']}_counts_total.txt",
-        nascent = f"{PREFIX}/collapsed/{config['GSE']}_counts_nascent.txt"
+        total = f"{PREFIX}/processed/{config['GSE']}_counts_total.txt",
+        nascent = f"{PREFIX}/processed/{config['GSE']}_counts_nascent.txt"
     resources:
         time_min = 30, cpus = 1
     params:
