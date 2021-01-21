@@ -66,15 +66,15 @@ rule slamdunk_map:
     output:
         f"{PREFIX}/map/{{sample}}_trimmed.fq_slamdunk_mapped.bam"
     resources:
-        time_min = 720, cpus = 32
+        time_min = 720, cpus = int(custom_param('map_threads', 32))
     params:
-        job_name = f"{config['GSE']}_SLAMDUNK_MAP",
+        job_name = f"{config['GSE']}_SLAMDUNK_MAP_{{sample}}",
         fasta = config[ORGANISM]['fasta']
     conda:
         "envs/slam-seq.yml"
     shell:
         f"""slamdunk map -r {{params.fasta}} \
-        -5 12 -n 100 \
+        -5 12 -n 1 \
         -t {{resources.cpus}} \
         -o {PREFIX}/map \
         {{input}}"""
@@ -85,7 +85,7 @@ rule slamdunk_filter:
     output:
         expand(f"{PREFIX}/filter/{{sample}}_trimmed.fq_slamdunk_mapped_filtered.bam", sample=SAMPLES)
     resources:
-        time_min = 60, cpus = 1
+        time_min = 720, cpus = int(custom_param('filter_threads', len(SAMPLES) if len(SAMPLES) < 32 else 32))
     params:
         job_name = f"{config['GSE']}_SLAMDUNK_FILTER",
         bed_utr = config[ORGANISM]['bed_utr']
@@ -93,7 +93,7 @@ rule slamdunk_filter:
         "envs/slam-seq.yml"
     shell:
         f"""slamdunk filter -b {{params.bed_utr}} \
-        -m \
+        -t {{resources.cpus}} \
         -o {PREFIX}/filter \
         {{input}}"""
 
@@ -103,7 +103,7 @@ rule slamdunk_snp:
     output:
         expand(f"{PREFIX}/snp/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_snp.vcf", sample=SAMPLES)
     resources:
-        time_min = 180, cpus = len(SAMPLES) if len(SAMPLES) < 32 else 32
+        time_min = 720, cpus = int(custom_param('snp_threads', len(SAMPLES) if len(SAMPLES) < 32 else 32))
     params:
         job_name = f"{config['GSE']}_SLAMDUNK_SNP",
         fasta = config[ORGANISM]['fasta']
@@ -122,7 +122,7 @@ rule slamdunk_count:
     output:
         expand(f"{PREFIX}/count/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_tcount.tsv", sample=SAMPLES)
     resources:
-        time_min = 180, cpus = len(SAMPLES) if len(SAMPLES) < 32 else 32
+        time_min = 720, cpus = int(custom_param('count_threads', len(SAMPLES) if len(SAMPLES) < 32 else 32))
     params:
         job_name = f"{config['GSE']}_SLAMDUNK_COUNT",
         fasta = config[ORGANISM]['fasta'],
