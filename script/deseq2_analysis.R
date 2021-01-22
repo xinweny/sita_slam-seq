@@ -6,9 +6,10 @@ library(ggrepel)
 library(glue)
 
 #### Set parameters ####
-gse <- "GSE100708"
-selectConditions <- c("K562_AID-BRD4_IAA", "K562_AID-BRD4_DMSO") # treatment / control
-alpha <- 0.01
+gse <- "PROJ1624"
+treatment <- "DMSO_TDP43"
+control <- "DMSO_NoAgg"
+alpha <- 0.05
 
 #### Functions ####
 format_condition <- function (colnames) {
@@ -45,9 +46,9 @@ addEnsemblSymbol <- function (table) {
   return(newTable)
 }
 
-deAnalysis <- function(counts.nascent, counts.total, selectConditions, a) {
-  countData.nascent <- counts.nascent %>% dplyr::select(matches(selectConditions)) %>% as.matrix(rownames=1)
-  countData.total <- counts.total %>% dplyr::select(matches(selectConditions)) %>% as.matrix(rownames=1)
+deAnalysis <- function(counts.nascent, counts.total, treatment, control, a) {
+  countData.nascent <- as.matrix(counts.nascent, rownames=1)
+  countData.total <- as.matrix(counts.total, rownames=1)
   
   # Set contrast
   cond <- format_condition(colnames(countData.nascent))
@@ -71,8 +72,10 @@ deAnalysis <- function(counts.nascent, counts.total, selectConditions, a) {
   dds.total <- dds.total[rowSums(counts(dds.nascent)) > 0, ]
   dds.nascent <- dds.nascent[rowSums(counts(dds.nascent)) > 0, ]
   
-  dds.nascent$condition <- relevel(dds.nascent$condition, ref=conditions[2])
-  dds.total$condition <- relevel(dds.total$condition, ref=conditions[2])
+  dds.nascent$condition <- relevel(dds.nascent$condition,
+                                   ref=control)
+  dds.total$condition <- relevel(dds.total$condition,
+                                 ref=control)
   
   # Run DESeq2 main command
   dds.total <- DESeq(dds.total)
@@ -80,19 +83,19 @@ deAnalysis <- function(counts.nascent, counts.total, selectConditions, a) {
   
   dds.nascent <- DESeq(dds.nascent)
   
-  coef <- tail(resultsNames(dds.nascent), n=1)
-  
   # Get results
-  res.nascent <- results(dds.nascent, name=coef, alpha=a)
-  resLFC.nascent <- lfcShrink(dds.nascent, coef=coef, res=res.nascent)
-  
-  res.total <- results(dds.total, name=coef, alpha=a)
-  resLFC.total <- lfcShrink(dds.total, coef=coef, res=res.total)
+  res.nascent <- results(dds.nascent,
+                         contrast=c("condition", treatment, control),
+                         alpha=a)
+
+  res.total <- results(dds.total,
+                       contrast=c("condition", treatment, control),
+                       alpha=a)
   
   # Put into list and return
   resList <- list()
-  resList$nascent <- as.data.frame(resLFC.nascent) %>% arrange(padj, desc(log2FoldChange))
-  resList$total <- as.data.frame(resLFC.total) %>% arrange(padj, desc(log2FoldChange))
+  resList$nascent <- as.data.frame(res.nascent) %>% arrange(padj, desc(log2FoldChange))
+  resList$total <- as.data.frame(res.total) %>% arrange(padj, desc(log2FoldChange))
   resList$conditions <- conditions
   
   return(resList)
@@ -102,13 +105,15 @@ MAPlot <- function(results, case, control, cutoff) {
   # Extract gene IDs for top 20 deregulated genes for plotting
   results$gene_name <- row.names(results)
   
+  results <- results[!is.na(results$padj), ]
+  
   dereg <- results[which(results$padj <= cutoff), ] # all significant deregulated genes
   nonsig <- results[!(results$gene_name %in% dereg$gene_name), ] # non-significant deregulated genes
   
   down <- nrow(dereg[dereg$log2FoldChange < 0, ]) # downregulated genes
   up <- nrow(dereg[dereg$log2FoldChange > 0, ]) # upregulated genes
   
-  top.dereg <- dereg[order(abs(dereg$log2FoldChange), decreasing=TRUE)[1:20], 1]
+  top.dereg <- dereg[order(abs(dereg$log2FoldChange), decreasing=TRUE), 1]
   top.dereg <- top.dereg[!is.na(top.dereg)]
   
   ## Generate summary of MA-plots with additional information & highlights
@@ -116,7 +121,7 @@ MAPlot <- function(results, case, control, cutoff) {
   # Only use exported plots for visual inspection
   
   # Generate basic MA-like plot with density coloring
-  p <- results %>% ggplot(aes(x=log10(baseMean), y=log2FoldChange)) +
+  p <- results %>% ggplot(aes(x=baseMean, y=log2FoldChange)) +
     theme_classic() +
     scale_color_identity() +
     labs(x='baseMean', y='log2FoldChange') +
@@ -130,25 +135,22 @@ MAPlot <- function(results, case, control, cutoff) {
           axis.ticks=element_line(size=0.5))
   
   # Generate MA-plot with highlights and labeling of significantly deregulated genes
-  if (nrow(dereg) > 0) {
-    p.highlight <- p +
-      geom_point(data=nonsig,
-                 aes(x=baseMean, y=log2FoldChange, col='gray60'),
-                 size=1.3, shape=16) +
-      geom_point(data=dereg,
-                 aes(x=baseMean, y=log2FoldChange, col='red1'),
-                 size=1.3, shape=16) +
-      geom_abline(aes(intercept=-1, slope=0), size=0.8, linetype=3) +
-      geom_hline(yintercept=0, size=0.8) +
-      geom_abline(aes(intercept=1, slope=0), size=0.8, linetype=3) +
-      scale_x_log10()
+  p.highlight <- p +
+    geom_point(data=nonsig,
+               aes(x=baseMean, y=log2FoldChange, col='gray60'),
+               size=1.3, shape=16) +
+    geom_point(data=dereg,
+               aes(x=baseMean, y=log2FoldChange, col='red1'),
+               size=1.3, shape=16) +
+    geom_abline(aes(intercept=-1, slope=0), size=0.8, linetype=3) +
+    geom_hline(yintercept=0, size=0.8) +
+    geom_abline(aes(intercept=1, slope=0), size=0.8, linetype=3)
     
-    p.highlight
-  }
+  p.highlight
 }
 
 #### Set working directory ####
-setwd("/Users/Pomato/mrc/project/sita_slam-seq/processed")
+setwd("~/mrc/project/sita_slam-seq/processed")
 
 #########################
 #### Start of Script ####
@@ -158,24 +160,25 @@ counts.nascent <- read.table(paste0(gse, "_counts_nascent.txt"), header=TRUE, se
 counts.total <- read.table(paste0(gse, "_counts_total.txt"), header=TRUE, sep="\t", row.names=1, check.names=FALSE)
 
 # DESeq2 analysis
-resultsLFC <- deAnalysis(counts.nascent, counts.total, selectConditions, alpha)
+results <- deAnalysis(counts.nascent, counts.total, treatment, control, alpha)
 
 # Add Ensembl symbol
-resultsLFC$nascent <- addEnsemblSymbol(resultsLFC$nascent)
-resultsLFC$total <- addEnsemblSymbol(resultsLFC$total)
+results$nascent <- addEnsemblSymbol(results$nascent)
+results$total <- addEnsemblSymbol(results$total)
 
-write.table(resultsLFC$nascent,
-            file=glue("{gse}_deNascent_{resultsLFC$conditions[1]}vs{resultsLFC$conditions[2]}.txt"),
-            row.names=TRUE, col.names=TRUE, sep="\t")
-write.table(resultsLFC$total,
-            file=glue("{gse}_deTotal_{resultsLFC$conditions[1]}vs{resultsLFC$conditions[2]}.txt"),
-            row.names=TRUE, col.names=TRUE, sep="\t")
+# Save DESeq2 output
+write.table(results$nascent,
+            file=glue("{gse}_DEnascent_{treatment}vs{control}.txt"),
+            row.names=TRUE, col.names=TRUE, sep="\t", quote=FALSE)
+write.table(results$total,
+            file=glue("{gse}_DEtotal_{treatment}vs{control}.txt"),
+            row.names=TRUE, col.names=TRUE, sep="\t", quote=FALSE)
 
-# MA plot
-png(glue("{gse}_MAplotNascent_{resultsLFC$conditions[1]}.{resultsLFC$conditions[2]}.png"))
-MAPlot(resultsLFC$nascent, resultsLFC$conditions[1], resultsLFC$conditions[2], alpha)
+# MA plot and save output
+png(glue("{gse}_MAplotNascent_{treatment}.{control}.png"))
+MAPlot(results$nascent, treatment, control, alpha)
 dev.off()
 
-png(glue("{gse}_MAplotTotal_{resultsLFC$conditions[1]}.{resultsLFC$conditions[2]}.png"))
-MAPlot(resultsLFC$total, resultsLFC$conditions[1], resultsLFC$conditions[2], alpha)
+png(glue("{gse}_MAplotTotal_{treatment}.{control}.png"))
+MAPlot(results$total, treatment, control, alpha)
 dev.off()
