@@ -5,12 +5,6 @@ library(biomaRt)
 library(ggrepel)
 library(glue)
 
-#### Set parameters ####
-gse <- "PROJ1624"
-treatment <- "DMSO_TDP43"
-control <- "DMSO_NoAgg"
-alpha <- 0.05
-
 #### Functions ####
 format_condition <- function (colnames) {
   new_cond <- gsub("_[0-9]*$", "", colnames)
@@ -101,6 +95,19 @@ deAnalysis <- function(counts.nascent, counts.total, treatment, control, a) {
   return(resList)
 }
 
+PCAPlot <- function(counts, title) {
+  colData <- data.frame(row.names=colnames(counts),
+                        condition=format_condition(colnames(counts)))
+  dds <- DESeqDataSetFromMatrix(countData=counts,
+                                colData=colData,
+                                design=~condition)
+  
+  # PCA plot
+  rld <- vst(dds, blind=TRUE)
+  
+  plotPCA(rld, intgroup="condition", title)
+}
+
 MAPlot <- function(results, case, control, cutoff) {
   # Extract gene IDs for top 20 deregulated genes for plotting
   results$gene_name <- row.names(results)
@@ -125,7 +132,7 @@ MAPlot <- function(results, case, control, cutoff) {
     theme_classic() +
     scale_color_identity() +
     labs(x='baseMean', y='log2FoldChange') +
-    ggtitle(paste0(case, ' vs ', control),
+    ggtitle(paste0(case, ' vs ', control, ' (p < ', cutoff, ')'),
             paste('n = ', nrow(results),
                   '// n(up) = ', up,
                   '// n(down) = ', down)) +
@@ -149,15 +156,30 @@ MAPlot <- function(results, case, control, cutoff) {
   p.highlight
 }
 
-#### Set working directory ####
-setwd("~/mrc/project/sita_slam-seq/processed")
-
 #########################
 #### Start of Script ####
 #########################
 
+#### Set working directory ####
+setwd("~/mrc/project/sita_slam-seq/processed")
+
+#### Set parameters ####
+gse <- "PROJ1624"
+treatment <- "C13_TDP43"
+control <- "DMSO_TDP43"
+alpha <- 0.15
+
 counts.nascent <- read.table(paste0(gse, "_counts_nascent.txt"), header=TRUE, sep="\t", row.names=1, check.names=FALSE)
 counts.total <- read.table(paste0(gse, "_counts_total.txt"), header=TRUE, sep="\t", row.names=1, check.names=FALSE)
+
+# PCA plot
+png(glue("{gse}_PCA_Nascent.png"))
+PCAPlot(counts.nascent, "PCA (Nascent)")
+dev.off()
+
+png(glue("{gse}_PCA_Total.png"))
+PCAPlot(counts.total, "PCA (Total)")
+dev.off()
 
 # DESeq2 analysis
 results <- deAnalysis(counts.nascent, counts.total, treatment, control, alpha)
@@ -175,10 +197,10 @@ write.table(results$total,
             row.names=TRUE, col.names=TRUE, sep="\t", quote=FALSE)
 
 # MA plot and save output
-png(glue("{gse}_MAplotNascent_{treatment}.{control}.png"))
+png(glue("{gse}_MAplotNascent_{treatment}_vs_{control}_{alpha}.png"))
 MAPlot(results$nascent, treatment, control, alpha)
 dev.off()
 
-png(glue("{gse}_MAplotTotal_{treatment}.{control}.png"))
+png(glue("{gse}_MAplotTotal_{treatment}_vs_{control}_{alpha}.png"))
 MAPlot(results$total, treatment, control, alpha)
 dev.off()
