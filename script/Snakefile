@@ -47,22 +47,27 @@ rule all:
         expand(f"{PREFIX}/stats/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_overallrates.pdf", sample=SAMPLES),
         expand(f"{PREFIX}/stats/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_mutationrates_utr.csv", sample=SAMPLES),
         expand(f"{PREFIX}/stats/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_mutationrates_utr.pdf", sample=SAMPLES)
+    params:
+        job_name = f"{config['GSE']}_ALL"
+    resources:
+        time_min = 1,
+        cpus = 1
 
 rule trim_galore:
     input:
         expand(f"{PREFIX}/fastq/{{sample}}{FQ_EXT}", sample=SAMPLES)
     output:
-        expand(f"{PREFIX}/fastq/{{sample}}_trimmed.fq.gz", sample=SAMPLES)
+        expand(f"{PREFIX}/fastq_trimmed/{{sample}}_trimmed.fq.gz", sample=SAMPLES)
     params:
         job_name = f"{config['GSE']}_TRIM"
     resources:
         time_min = 120, cpus = len(SAMPLES) if len(SAMPLES) < 32 else 32
     shell:
-        f"trim_galore -j {{resources.cpus}} -o {PREFIX}/fastq --stringency 3 {{input}}"
+        f"trim_galore -j {{resources.cpus}} -o {PREFIX}/fastq_trimmed --stringency 3 {{input}}"
 
 rule slamdunk_map:
     input:
-        f"{PREFIX}/fastq/{{sample}}_trimmed.fq.gz"
+        f"{PREFIX}/fastq_trimmed/{{sample}}_trimmed.fq.gz"
     output:
         f"{PREFIX}/map/{{sample}}_trimmed.fq_slamdunk_mapped.bam"
     resources:
@@ -115,7 +120,8 @@ rule slamdunk_snp:
 
 rule slamdunk_count:
     input:
-        rules.slamdunk_filter.output
+        bams = rules.slamdunk_filter.output,
+        snps = rules.slamdunk_snp.output
     output:
         expand(f"{PREFIX}/count/{{sample}}_trimmed.fq_slamdunk_mapped_filtered_tcount.tsv", sample=SAMPLES)
     resources:
@@ -130,7 +136,7 @@ rule slamdunk_count:
         -l 100 -q 27 \
         -t {{resources.cpus}} \
         -o {PREFIX}/count \
-        {{input}}"""
+        {{input.bams}}"""
 
 rule alleyoop_collapse:
     input:

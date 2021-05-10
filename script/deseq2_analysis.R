@@ -31,6 +31,8 @@ addEnsemblSymbol <- function (table) {
                     values=genes,
                     mart=mart)
   
+  geneList <- distinct(geneList, ensembl_gene_id, .keep_all=TRUE)
+  
   row.names(geneList) <- geneList[, 1]
   geneList[, 1] <- NULL
   
@@ -73,8 +75,8 @@ deAnalysis <- function(counts.nascent, counts.total, treatment, control, a) {
   
   # Run DESeq2 main command
   dds.total <- DESeq(dds.total)
-  sizeFactors(dds.nascent) <- sizeFactors(dds.total) # apply size factors to tc counts
   
+  sizeFactors(dds.nascent) <- sizeFactors(dds.total) # apply size factors to tc counts
   dds.nascent <- DESeq(dds.nascent)
   
   # Get results
@@ -164,11 +166,18 @@ MAPlot <- function(results, case, control, cutoff) {
 setwd("~/mrc/project/sita_slam-seq/processed")
 
 #### Set parameters ####
-gse <- "PROJ1624"
-treatment <- "C13_TDP43"
-control <- "DMSO_TDP43"
-alpha <- 0.15
+gse <- "PROJ1791"
 
+control <- "Control"
+treatment <- "heatshock"
+
+alpha <- 0.05
+
+delete.columns <- c("Control_rep1", "Control_rep2",
+                    "heatshock_rep1", "heatshock_rep2",
+                    "LPS_rep1", "LPS_rep2")
+
+#### Load data ####
 counts.nascent <- read.table(paste0(gse, "_counts_nascent.txt"), header=TRUE, sep="\t", row.names=1, check.names=FALSE)
 counts.total <- read.table(paste0(gse, "_counts_total.txt"), header=TRUE, sep="\t", row.names=1, check.names=FALSE)
 
@@ -181,6 +190,12 @@ png(glue("{gse}_PCA_Total.png"))
 PCAPlot(counts.total, "PCA (Total)")
 dev.off()
 
+# Delete columns
+if (length(delete.columns) > 0) {
+  counts.nascent <- counts.nascent[, -which(colnames(counts.nascent) %in% delete.columns)]
+  counts.total <- counts.total[, -which(colnames(counts.total) %in% delete.columns)]
+}
+
 # DESeq2 analysis
 results <- deAnalysis(counts.nascent, counts.total, treatment, control, alpha)
 
@@ -190,10 +205,10 @@ results$total <- addEnsemblSymbol(results$total)
 
 # Save DESeq2 output
 write.table(results$nascent,
-            file=glue("{gse}_DEnascent_{treatment}vs{control}.txt"),
+            file=glue("{gse}_DEnascent_{treatment}_vs_{control}.txt"),
             row.names=TRUE, col.names=TRUE, sep="\t", quote=FALSE)
 write.table(results$total,
-            file=glue("{gse}_DEtotal_{treatment}vs{control}.txt"),
+            file=glue("{gse}_DEtotal_{treatment}_vs_{control}.txt"),
             row.names=TRUE, col.names=TRUE, sep="\t", quote=FALSE)
 
 # MA plot and save output
